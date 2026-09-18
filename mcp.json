@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "ctfd-mcp": {
+      "command": "python",
+      "args": ["ctfd_mcp_server.py"],
+      "env": {
+        "CTFD_BASE_URL": "https://demo.ctfd.io",
+        "CTFD_ADMIN_TOKEN": ""
+      }
+    }
+  }
+}

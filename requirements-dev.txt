@@ -1,0 +1,5 @@
+# Development / test dependencies
+pytest>=8.0
+
+# Optional static analysis
+ruff>=0.4

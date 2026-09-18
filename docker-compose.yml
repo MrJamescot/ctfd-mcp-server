@@ -1,12 +1,13 @@
-version: "3.8"
 services:
   ctfd-mcp:
     build: .
     ports:
-      - "9999:9999"
+      - "8000:8000"
     environment:
-      - CTFD_BASE_URL=${CTFD_BASE_URL}
-      - CTFD_ADMIN_TOKEN=${CTFD_ADMIN_TOKEN}
+      - CTFD_BASE_URL=${CTFD_BASE_URL:-https://demo.ctfd.io}
+      - CTFD_ADMIN_TOKEN=${CTFD_ADMIN_TOKEN:-}
+      - CTFD_SESSION_COOKIE=${CTFD_SESSION_COOKIE:-}
       - FILE_CACHE_DIR=/data/file_cache
     volumes:
       - ./file_cache:/data/file_cache
+    restart: unless-stopped
