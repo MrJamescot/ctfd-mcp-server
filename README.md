@@ -1,5 +1,7 @@
 # CTFd MCP Server
 
+<!-- mcp-name: io.github.mrjamescot/ctfd-mcp-server -->
+
 [![PyPI - Version](https://img.shields.io/pypi/v/ctfd-mcp-server.svg)](https://pypi.org/project/ctfd-mcp-server/)
 [![PyPI - Python Versions](https://img.shields.io/pypi/pyversions/ctfd-mcp-server.svg)](https://pypi.org/project/ctfd-mcp-server/)
 [![Docker Pulls](https://img.shields.io/docker/pulls/jamescot/ctfd-mcp-server.svg)](https://hub.docker.com/r/jamescot/ctfd-mcp-server)
