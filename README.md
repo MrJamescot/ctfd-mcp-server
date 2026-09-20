@@ -2,7 +2,7 @@
 
 [![PyPI - Version](https://img.shields.io/pypi/v/ctfd-mcp-server.svg)](https://pypi.org/project/ctfd-mcp-server/)
 [![PyPI - Python Versions](https://img.shields.io/pypi/pyversions/ctfd-mcp-server.svg)](https://pypi.org/project/ctfd-mcp-server/)
-[![Docker Pulls](https://img.shields.io/docker/pulls/mrjamescot/ctfd-mcp-server.svg)](https://hub.docker.com/r/mrjamescot/ctfd-mcp-server)
+[![Docker Pulls](https://img.shields.io/docker/pulls/jamescot/ctfd-mcp-server.svg)](https://hub.docker.com/r/jamescot/ctfd-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/MrJamescot/ctfd-mcp-server?style=flat)](https://github.com/MrJamescot/ctfd-mcp-server)
 
@@ -216,13 +216,13 @@ Endpoints (all under `/api/v1`):
 
 ## Docker
 
-A ready-made image is published on **[Docker Hub](https://hub.docker.com/r/mrjamescot/ctfd-mcp-server)**:
+A ready-made image is published on **[Docker Hub](https://hub.docker.com/r/jamescot/ctfd-mcp-server)**:
 
 ```bash
 docker run --rm -p 8000:8000 \
   -e CTFD_BASE_URL=https://ctf.example.com \
   -e CTFD_ADMIN_TOKEN=ctfd_... \
-  mrjamescot/ctfd-mcp-server
+  jamescot/ctfd-mcp-server
 ```
 
 Or build locally (REST mode):

@@ -22,7 +22,7 @@ you push a `v*` tag.
 ## 0. Base URL (everything references this)
 
 Repository: `https://github.com/MrJamescot/ctfd-mcp-server`
-Docker image name: `mrjamescot/ctfd-mcp-server`
+Docker image name: `jamescot/ctfd-mcp-server`
 PyPI project name: `ctfd-mcp-server`
 
 ---
@@ -59,10 +59,10 @@ git tag v1.0.0 && git push origin v1.0.0
 1. Create an account at <https://hub.docker.com/signup>.
 2. **Account Settings → Personal Access Tokens → Generate** (read/write access).
 3. On GitHub add two repository secrets:
-   - `DOCKER_USERNAME` = your Docker Hub username (`mrjamescot`).
+   - `DOCKER_USERNAME` = your Docker Hub username (`jamescot`).
    - `DOCKER_TOKEN` = the access token.
 4. Publish: push a `v*` tag → the `Publish Docker Image` workflow builds and
-   pushes `mrjamescot/ctfd-mcp-server:latest` and the version-tagged image.
+   pushes `jamescot/ctfd-mcp-server:latest` and the version-tagged image.
 5. First image must be created manually once: create repo
    `ctfd-mcp-server` on Docker Hub (public) so the workflow can push.
 
