@@ -170,10 +170,21 @@ class Gateway:
                     ),
                 )
 
-        if response.status in (401, 403):
+        if response.status == 401:
             raise AuthenticationError(
-                f"CTFd rejected the request ({response.status} UNAUTHORIZED/FORBIDDEN).",
+                "CTFd rejected the request (401 UNAUTHORIZED).",
                 detail="Check the token/cookie or log in first.",
+            )
+
+        if response.status == 403:
+            raise AuthenticationError(
+                "CTFd rejected the request (403 FORBIDDEN).",
+                detail=(
+                    "The credential may be invalid, OR the account is authenticated "
+                    "but lacks permission (e.g. not in a team, or the endpoint "
+                    "requires admin). Try joining/creating a team or using an admin "
+                    "account/token."
+                ),
             )
 
         if response.status == 429:
