@@ -1,0 +1,66 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.MrJamescot/ctfd-mcp-server",
+  "title": "CTFd",
+  "description": "MCP server for CTFd v3: list challenges, submit flags, and query scoreboards via AI agents.",
+  "repository": {
+    "url": "https://github.com/MrJamescot/ctfd-mcp-server",
+    "source": "github"
+  },
+  "version": "1.0.2",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "ctfd-mcp-server",
+      "version": "1.0.2",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "Root URL of the CTFd v3 instance, e.g. https://ctf.example.com (without /api/v1)",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false,
+          "name": "CTFD_BASE_URL"
+        },
+        {
+          "description": "CTFd API access token (preferred authentication method)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "CTFD_ADMIN_TOKEN"
+        },
+        {
+          "description": "Full CTFd session cookie, e.g. session=abc...",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "CTFD_SESSION_COOKIE"
+        },
+        {
+          "description": "Username for CTFd form login",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "CTFD_USERNAME"
+        },
+        {
+          "description": "Password for CTFd form login",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true,
+          "name": "CTFD_PASSWORD"
+        },
+        {
+          "description": "Per-request HTTP timeout in seconds (default 15)",
+          "isRequired": false,
+          "format": "number",
+          "isSecret": false,
+          "name": "CTFD_HTTP_TIMEOUT"
+        }
+      ]
+    }
+  ]
+}

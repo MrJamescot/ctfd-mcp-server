@@ -1,6 +1,6 @@
 # CTFd MCP Server
 
-<!-- mcp-name: io.github.mrjamescot/ctfd-mcp-server -->
+<!-- mcp-name: io.github.MrJamescot/ctfd-mcp-server -->
 
 [![PyPI - Version](https://img.shields.io/pypi/v/ctfd-mcp-server.svg)](https://pypi.org/project/ctfd-mcp-server/)
 [![PyPI - Python Versions](https://img.shields.io/pypi/pyversions/ctfd-mcp-server.svg)](https://pypi.org/project/ctfd-mcp-server/)
