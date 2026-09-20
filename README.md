@@ -342,6 +342,13 @@ curl http://localhost:8001/api/v1/health
   when authenticated.
 - Instance "version" is reported only when it appears in the rendered page; CTFd
   has no public version API endpoint.
+- **Tokens are per-instance.** CTFd redirects `/api/v1` calls to its login page
+  when a credential is invalid. The server detects this and reports: *"the
+  credential is not valid for THIS instance"* — a token from one CTFd instance
+  never works on another.
+- When `CTFD_USERNAME`/`CTFD_PASSWORD` are configured, the server **auto-logs-in
+  on demand** (rotating the session cookie) whenever a call returns
+  unauthenticated, so expired sessions self-heal.
 
 ---
 

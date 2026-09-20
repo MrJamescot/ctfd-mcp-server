@@ -436,6 +436,27 @@ class CTFdClient:
             )
             result["ctfd_reachable"] = True
             result["api_ok"] = isinstance(payload, dict)
+        except AuthenticationError:
+            if state.auth_mode() == "credentials":
+                logger.info("Challenges probe unauthenticated; refreshing login automatically.")
+                try:
+                    await self.refresh_login()
+                    payload = await self.gateway.request(
+                        "GET", "/challenges", allow_failure=True, retry=True
+                    )
+                    result["ctfd_reachable"] = True
+                    result["api_ok"] = isinstance(payload, dict)
+                except (AuthenticationError, CTFdAPIError) as exc:
+                    result["ctfd_reachable"] = (
+                        exc.status != 0 if isinstance(exc, CTFdAPIError) else False
+                    )
+                    result["message"] = "challenges probe failed; login could not be refreshed."
+            else:
+                result["ctfd_reachable"] = True
+                result["message"] = (
+                    "challenges probe returned the login page: the credential is not "
+                    "valid for this instance (or the account has no access)."
+                )
         except CTFdAPIError as exc:
             result["ctfd_reachable"] = exc.status != 0
             result["message"] = f"challenges probe failed (HTTP {exc.status or 'unreachable'})"

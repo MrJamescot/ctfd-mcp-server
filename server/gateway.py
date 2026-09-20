@@ -155,6 +155,21 @@ class Gateway:
             with contextlib.suppress(json.JSONDecodeError):
                 payload = json.loads(body_text)
 
+        if (
+            payload is None
+            and "html" in content_type.lower()
+            and self._looks_like_login_page(body_text)
+        ):
+            raise AuthenticationError(
+                    "CTFd redirected to its login page instead of returning JSON "
+                    f"({method} {path}). The credential is not valid for THIS "
+                    "instance (or the account has no access).",
+                    detail=(
+                        "Provide a valid API token/cookie for this CTFd instance, "
+                        "or call set_cookie/login with the account of this instance."
+                    ),
+                )
+
         if response.status in (401, 403):
             raise AuthenticationError(
                 f"CTFd rejected the request ({response.status} UNAUTHORIZED/FORBIDDEN).",
@@ -193,6 +208,17 @@ class Gateway:
             raise CTFdAPIError(message or "CTFd API error", response.status)
 
         return payload
+
+    @staticmethod
+    def _looks_like_login_page(body_text: str) -> bool:
+        """Best-effort detection that HTML came from an auth login page."""
+        sample = body_text[:4000].lower()
+        return (
+            "/login" in sample
+            or ">login<" in sample
+            or "sign in" in sample
+            or "log in" in sample
+        )
 
     async def close(self) -> None:
         await session_manager.close()
