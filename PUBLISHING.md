@@ -94,13 +94,25 @@ git tag v1.0.0 && git push origin v1.0.0
 
 ## 5. Official Model Context Protocol registry
 
-The official registry is published via the
-[`registry`](https://github.com/modelcontextprotocol/registry) project.
+The official registry no longer accepts pull requests to
+`modelcontextprotocol/registry` (`data/seed.json` is dev-only seed data).
+Publishing is done with the official **`mcp-publisher`** CLI:
 
-1. Fork `modelcontextprotocol/registry`.
-2. Add your server to `servers/` (follow the existing JSON schema in the repo).
-3. Open a Pull Request with the entry. Once merged, the server is listed on
-   <https://registry.modelcontextprotocol.io>.
+1. Make sure the PyPI package README contains the ownership marker
+   `<!-- mcp-name: io.github.MrJamescot/ctfd-mcp-server -->` in the published
+   version (already present since `1.0.2`).
+2. Install the CLI (see
+   [modelcontextprotocol/registry](https://github.com/modelcontextprotocol/registry)
+   releases): `curl -L ".../mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher`.
+3. `./mcp-publisher init` then edit the generated `server.json` (the current
+   valid copy lives in this repo).
+4. `./mcp-publisher validate server.json`
+5. `./mcp-publisher login github` (authorize the device code in your browser).
+6. `./mcp-publisher publish server.json`
+
+After a version bump: bump the version in `pyproject.toml`, bump the version
+fields in `server.json`, cut a `v*` tag (auto-publishes PyPI), then run
+`validate` + `publish` again.
 
 > Registries you should also consider: **[Glama](https://glama.ai/mcp/servers)**
 > (AI marketplace) and **[Pulse](https://www.pulsemcp.com)**. Both accept GitHub
