@@ -184,5 +184,10 @@ async def download_file(fid: int):
     return await ctfd_client.download_challenge_file(fid, f"file_{fid}")
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Console-script entry point: start the REST server with uvicorn."""
     uvicorn.run("server.main:app", host=settings.mcp_host, port=settings.mcp_port)
+
+
+if __name__ == "__main__":
+    run()

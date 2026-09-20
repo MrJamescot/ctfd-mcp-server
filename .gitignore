@@ -14,6 +14,9 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+dist/
+build/
+*.whl
 
 # Editors / OS
 .idea/

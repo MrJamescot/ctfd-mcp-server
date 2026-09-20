@@ -1,0 +1,51 @@
+name: "@MrJamescot/ctfd-mcp-server"
+description: Model Context Protocol (MCP) server for interacting with any CTFd v3 instance - list challenges, submit flags, query scoreboards via AI tools.
+author: MrJamescot
+license: MIT
+version: 1.0.0
+repo: https://github.com/MrJamescot/ctfd-mcp-server
+homepage: https://github.com/MrJamescot/ctfd-mcp-server
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - ctfdBaseUrl
+    properties:
+      ctfdBaseUrl:
+        type: string
+        description: Root URL of the CTFd v3 instance, e.g. https://ctf.example.com (without /api/v1)
+      ctfdAdminToken:
+        type: string
+        description: CTFd API access token (preferred auth)
+      ctfdSessionCookie:
+        type: string
+        description: Full CTFd session cookie, e.g. session=abc...
+      ctfdUsername:
+        type: string
+        description: Username for CTFd form login
+      ctfdPassword:
+        type: string
+        description: Password for CTFd form login
+      ctfdHttpTimeout:
+        type: number
+        description: Per-request HTTP timeout in seconds
+        default: 15
+  commandFunction: |
+    function(config) {
+      const env = {
+        PYTHONUNBUFFERED: "1",
+      };
+      if (config.ctfdBaseUrl) env["CTFD_BASE_URL"] = config.ctfdBaseUrl;
+      if (config.ctfdAdminToken) env["CTFD_ADMIN_TOKEN"] = config.ctfdAdminToken;
+      if (config.ctfdSessionCookie) env["CTFD_SESSION_COOKIE"] = config.ctfdSessionCookie;
+      if (config.ctfdUsername) env["CTFD_USERNAME"] = config.ctfdUsername;
+      if (config.ctfdPassword) env["CTFD_PASSWORD"] = config.ctfdPassword;
+      if (config.ctfdHttpTimeout) env["CTFD_HTTP_TIMEOUT"] = String(config.ctfdHttpTimeout);
+      return {
+        command: "python",
+        args: ["-m", "ctfd_mcp_server"],
+        env,
+      };
+    }

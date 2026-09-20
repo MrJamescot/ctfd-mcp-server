@@ -1,5 +1,11 @@
 # CTFd MCP Server
 
+[![PyPI - Version](https://img.shields.io/pypi/v/ctfd-mcp-server.svg)](https://pypi.org/project/ctfd-mcp-server/)
+[![PyPI - Python Versions](https://img.shields.io/pypi/pyversions/ctfd-mcp-server.svg)](https://pypi.org/project/ctfd-mcp-server/)
+[![Docker Pulls](https://img.shields.io/docker/pulls/mrjamescot/ctfd-mcp-server.svg)](https://hub.docker.com/r/mrjamescot/ctfd-mcp-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/MrJamescot/ctfd-mcp-server?style=flat)](https://github.com/MrJamescot/ctfd-mcp-server)
+
 A Model Context Protocol (MCP) server for interacting with any **CTFd v3** instance.
 It lets AI tools (Claude Desktop, Cursor, custom agents, ...) authenticate, list
 and inspect challenges, submit flags, and query instance state through a stable,
@@ -62,6 +68,36 @@ echoed in tool output, written to `server_state.json`, or logged.
 ## Installation
 
 Requires Python 3.10+.
+
+The fastest way is to install from **[PyPI](https://pypi.org/project/ctfd-mcp-server/)**:
+
+```bash
+pip install ctfd-mcp-server
+
+# MCP stdio server with env config:
+CTFD_BASE_URL=https://ctf.example.com CTFD_ADMIN_TOKEN=ctfd_... ctfd-mcp
+
+# optional REST interface:
+ctfd-rest
+```
+
+For MCP clients, point your config at the packaged entry point:
+
+```jsonc
+{
+  "mcpServers": {
+    "ctfd-mcp": {
+      "command": "ctfd-mcp",
+      "env": {
+        "CTFD_BASE_URL": "https://demo.ctfd.io",
+        "CTFD_ADMIN_TOKEN": "ctfd_..."
+      }
+    }
+  }
+}
+```
+
+Or run from source:
 
 ```bash
 git clone https://github.com/MrJamescot/ctfd-mcp-server.git
@@ -180,12 +216,16 @@ Endpoints (all under `/api/v1`):
 
 ## Docker
 
+A ready-made image is published on **[Docker Hub](https://hub.docker.com/r/mrjamescot/ctfd-mcp-server)**:
+
 ```bash
-docker compose up --build
-# REST API on http://localhost:8000
+docker run --rm -p 8000:8000 \
+  -e CTFD_BASE_URL=https://ctf.example.com \
+  -e CTFD_ADMIN_TOKEN=ctfd_... \
+  mrjamescot/ctfd-mcp-server
 ```
 
-Or build/run manually (REST mode):
+Or build locally (REST mode):
 
 ```bash
 docker build -t ctfd-mcp .
@@ -194,6 +234,8 @@ docker run --rm -p 8000:8000 \
   -e CTFD_ADMIN_TOKEN=ctfd_... \
   ctfd-mcp
 ```
+
+`docker compose up --build` also works (REST API on `http://localhost:8000`).
 
 To run the **MCP SSE** server in a container instead:
 
