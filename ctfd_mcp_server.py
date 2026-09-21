@@ -169,6 +169,44 @@ async def submit_flag(
 
 
 @mcp.tool()
+async def download_file(
+    file_url: str, dest_dir: str | None = None
+) -> str:
+    """Download a challenge attachment to the local machine.
+
+    Challenge detail (``challenge`` tool) returns a ``files`` array with
+    site-relative paths like ``/files/<hash>/<name>`` (signed URLs on some
+    deployments).  Pass one of those values here.
+
+    Args:
+        file_url: absolute http(s) URL or site-relative path to the file.
+        dest_dir: optional local directory to store the file in (default:
+            CTFD_DOWNLOAD_DIR or ./downloads).
+    """
+    try:
+        return _ok(await ctfd_client.download_file(file_url, dest_dir=dest_dir))
+    except CTFdError as exc:
+        return _err(exc)
+
+
+@mcp.tool()
+async def unlock_hint(hint_id: int) -> str:
+    """Unlock a challenge hint and return its content.
+
+    WARNING: on CTFd a hint with a non-zero ``cost`` deducts that many points
+    from your account.  When two hint IDs are needed (e.g. a hint's
+    prerequisites), unlock them in order.
+
+    Args:
+        hint_id: numeric id of the hint (see the ``challenge`` tool result).
+    """
+    try:
+        return _ok(await ctfd_client.unlock_hint(hint_id))
+    except CTFdError as exc:
+        return _err(exc)
+
+
+@mcp.tool()
 async def scoreboard() -> str:
     """Return the public CTFd scoreboard (top standings)."""
     try:
@@ -215,20 +253,6 @@ async def health() -> str:
     """Perform a health check: CTFd reachability, API status and authentication state."""
     try:
         return _ok(await ctfd_client.health())
-    except CTFdError as exc:
-        return _err(exc)
-
-
-@mcp.tool()
-async def download_file(file_id: int) -> str:
-    """Download a challenge file into the local cache directory.
-
-    Args:
-        file_id: numeric id of the challenge file.
-    """
-    try:
-        saved = await ctfd_client.download_challenge_file(file_id, f"file_{file_id}")
-        return _ok(saved)
     except CTFdError as exc:
         return _err(exc)
 

@@ -19,7 +19,24 @@ from typing import Any
 from .config import settings
 from .utils import mask
 
-STATE_FILE = Path("./server_state.json")
+
+def _state_file_path() -> Path:
+    """Stable path for non-secret runtime state (never the bare CWD).
+
+    ``CTFD_STATE_FILE`` overrides the location; relative values resolve
+    against the current working directory.  The default lives under the
+    user's XDG state directory so an ephemeral working directory (e.g. in
+    containers) does not pollute the filesystem.
+    """
+    configured = settings.ctfd_state_file
+    if configured:
+        path = Path(configured).expanduser()
+    else:
+        path = Path.home() / ".local" / "state" / "ctfd-mcp" / "server_state.json"
+    return path
+
+
+STATE_FILE = _state_file_path()
 
 
 class StateManager:

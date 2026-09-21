@@ -120,9 +120,13 @@ cp .env.example .env     # then edit .env
 | `CTFD_USERNAME`        | *(empty)*             | Username for form login                        |
 | `CTFD_PASSWORD`        | *(empty)*             | Password for form login                        |
 | `CTFD_HTTP_TIMEOUT`    | `15`                  | Per-request HTTP timeout (seconds)             |
+| `CTFD_HTTP_MAX_REDIRECTS` | `5`                | Max redirects followed per request             |
+| `CTFD_STATE_FILE`      | `~/.local/state/ctfd-mcp/server_state.json` | File used to cache auth state |
 | `CTFD_MCP_TRANSPORT`   | `stdio`               | MCP transport: `stdio` or `sse`                |
-| `MCP_HOST` / `MCP_PORT`| `0.0.0.0` / `8000`    | REST server bind settings                      |
-| `FILE_CACHE_DIR`       | `./file_cache`        | Where downloaded challenge files are stored    |
+| `MCP_HOST` / `MCP_PORT`| `127.0.0.1` / `8000`  | REST server bind settings (loopback by default) |
+| `CTFD_API_TOKEN`       | *(empty)*             | Optional bearer token protecting the optional REST API (`/api/v1/*`) |
+| `CTFD_ALLOW_PRIVATE_IPS` | `false`             | Allow connections to private/loopback/metadata addresses (e.g. local CTFd test instances) |
+| `CTFD_DOWNLOAD_DIR`    | `./downloads`           | Directory where challenge attachments are saved by `download_file` |
 | `CTFD_PERSIST_SECRETS` | `false`               | ⚠ Strongly discouraged: write secrets to disk  |
 
 > `CTFD_BASE_URL` may include a path prefix (e.g. `https://host/ctfd`); the client
@@ -172,12 +176,18 @@ CTFD_MCP_TRANSPORT=sse python ctfd_mcp_server.py   # http://127.0.0.1:8000/sse
 | `challenges`      | `category`, `search`, `solved`, `page`, `per_page`                      | Paginated challenge list with filters |
 | `challenge`       | `identifier` (id **or** name)                                           | Full detail of one challenge |
 | `submit_flag`     | `flag`, `challenge_name`/`challenge_id`, `confirm`                      | Submit a flag (requires `confirm=True`) |
+| `download_file`   | `file_url`, `dest_dir`                                                  | Download a challenge attachment over the CTFd `/files/…` route |
+| `unlock_hint`     | `hint_id`                                                               | Unlock and read a hint (paid hints cost points) |
 | `scoreboard`      | —                                                                       | Public scoreboard standings |
 | `progress`        | —                                                                       | Your score + solved challenges |
 | `instance_info`   | —                                                                       | Safe public instance metadata |
 | `auth_status`     | —                                                                       | Auth mode + validity (no secrets) |
 | `health`          | —                                                                       | Reachability, API and auth checks |
-| `download_file`   | `file_id`                                                               | Save a challenge file to the cache |
+
+> With token auth, requests are sent with `Content-Type: application/json`
+> (CTFd only honours `Authorization: Token ...` on JSON requests). With
+> cookie/credentials auth, state-changing requests echo the session CSRF nonce
+> as the `CSRF-Token` header, which is re-fetched from the site after login.
 
 Tools return JSON text. Errors are structured, e.g.:
 
@@ -207,12 +217,18 @@ Endpoints (all under `/api/v1`):
 | GET    | `/challenges`                 | Paginated + filtered challenge list      |
 | GET    | `/challenges/{id-or-name}`    | Challenge detail                         |
 | POST   | `/submit`                     | Submit a flag (`confirm: true` required) |
+| POST   | `/download`                   | Download a challenge attachment (body: `file_url`) |
+| POST   | `/unlock_hint`                | Unlock and read a hint (body: `hint_id`) |
 | GET    | `/scoreboard`                 | Public standings                         |
 | GET    | `/progress`                   | Your score and solves                    |
 | GET    | `/instance_info`              | Public instance metadata                 |
 | GET    | `/auth_status`                | Auth mode + validity                     |
 | GET    | `/health`                     | Health check                             |
-| GET    | `/files/{fid}/download`       | Save a challenge file                    |
+
+> The optional REST API can be protected with an extra bearer token: set
+> `CTFD_API_TOKEN`, and requests to `/api/v1/*` will require
+> `Authorization: Bearer <token>`. The server binds to loopback by default
+> (`MCP_HOST=127.0.0.1`).
 
 ---
 
@@ -325,8 +341,9 @@ curl http://localhost:8001/api/v1/health
 - **Trust model.** The server is a local/dev tool: whoever can call its tools can
   point it at any CTFd instance and (with a valid credential) read data or submit
   flags. Do **not** expose the REST/SSE endpoints on an untrusted network.
-- **File downloads** are written under `FILE_CACHE_DIR` with sanitized filenames
-  (path-traversal protected).
+- **SSRF guard.** By default connections to private / loopback / link-local /
+  metadata addresses are refused (`CTFD_ALLOW_PRIVATE_IPS=1` opts out). A local
+  container or a tool pointed at a private instance will get a clear error.
 
 ---
 
@@ -348,7 +365,11 @@ curl http://localhost:8001/api/v1/health
   never works on another.
 - When `CTFD_USERNAME`/`CTFD_PASSWORD` are configured, the server **auto-logs-in
   on demand** (rotating the session cookie) whenever a call returns
-  unauthenticated, so expired sessions self-heal.
+  unauthenticated, so expired sessions self-heal. After each login the CSRF
+  nonce is re-fetched from the site (a fresh nonce is required for flag
+  submissions over a web session).
+- A teamless account sees no `/api/v1/challenges` on team-mode instances until it
+  joins or creates a team; the server surfaces CTFd's permission message.
 
 ---
 

@@ -8,14 +8,12 @@ from .config import settings
 from .errors import ConfigurationError
 from .gateway import gateway
 from .state_manager import state
-from .utils import ensure_cache_dir
 
 logger = logging.getLogger("ctfd.setup")
 
 
 def configure_from_env() -> None:
     """Apply environment-provided configuration and secrets (no echo)."""
-    ensure_cache_dir()
     if settings.ctfd_base_url:
         try:
             gateway.set_base(settings.ctfd_base_url)

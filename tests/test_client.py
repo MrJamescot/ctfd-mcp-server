@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import tempfile
 import unittest
 
 from server import state_manager
@@ -17,7 +19,7 @@ from server.errors import (
 )
 from server.state_manager import state
 
-from .conftest import challenge_page, make_challenge
+from .conftest import FakeGateway, challenge_page, make_challenge
 
 
 class AlwaysRaisingGateway:
@@ -97,15 +99,37 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
             "content_type": "text/html",
             "set_cookie": "session=cafe1234; Path=/; HttpOnly",
         }
+        # After login the nonce is re-fetched from an authenticated page.
+        authed_html = "<script>window.init = {'csrfNonce': '5eedbeefc0ffee5eedbeefc0ffee'}</script>"
+        gw.responses[("GET", "/challenges")] = {
+            "status": 200,
+            "text": authed_html,
+            "content_type": "text/html",
+            "set_cookie": "",
+        }
         c = build_client(gw)
         result = await c.login("alice", "s3cret")
         self.assertTrue(result["success"])
         self.assertEqual(result["mode"], "cookie")
         self.assertTrue(result["csrf_used"])
         self.assertEqual(state.get_cookie(), "session=cafe1234; Path=/; HttpOnly")
-        # The posted form carried the CSRF nonce
-        post_kwargs = gw.calls[-1][2]
-        self.assertEqual(post_kwargs["data"]["nonce"], "feedbeefcafe")
+        # The posted form carried the CSRF nonce (find the POST /login call;
+        # the post-login nonce re-fetch appends a GET /challenges call after it).
+        post_calls = [
+            c for c in gw.calls if c[0] == "POST" and c[1] == "/login"
+        ]
+        self.assertEqual(len(post_calls), 1)
+        self.assertEqual(post_calls[0][2]["data"]["nonce"], "feedbeefcafe")
+        # A1b: the stored nonce is the one from the authenticated page,
+        # not the pre-login one (CTFd regenerates it on login).
+        from server.session_manager import session_manager
+
+        self.assertEqual(session_manager.csrf_nonce, "5eedbeefc0ffee5eedbeefc0ffee")
+        # The nonce re-fetch must hit the HTML page (/challenges), not the JSON
+        # API endpoint (/api/v1/challenges), which carries no nonce.
+        nonce_fetch = [c for c in gw.calls if c[0] == "GET" and c[1] == "/challenges"]
+        self.assertEqual(len(nonce_fetch), 1)
+        self.assertIs(nonce_fetch[0][2].get("use_api"), False)
 
     async def test_login_rejected(self):
         from .conftest import FakeGateway
@@ -261,6 +285,13 @@ class SubmissionTests(unittest.IsolatedAsyncioTestCase):
         c = build_client(FakeGateway())
         with self.assertRaises(ValidationError):
             await c.submit_flag(flag="flag{x}", confirm=True)
+
+    async def test_submit_rejects_non_integer_challenge_id(self):
+        from .conftest import FakeGateway
+
+        c = build_client(FakeGateway())
+        with self.assertRaises(ValidationError):
+            await c.submit_flag(flag="flag{x}", challenge_id="not-a-number", confirm=True)
 
     async def test_submit_success(self):
         from .conftest import FakeGateway
@@ -468,6 +499,182 @@ class PersistenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("cookie", content)
         self.assertNotIn("super-secret-password", content)
         self.assertNotIn("leaky", content)
+
+
+class ScrubTests(unittest.TestCase):
+    """C2: sanitize redacts known secret *values* even inside strings."""
+
+    def test_known_secret_value_scrubbed_from_strings(self):
+        from server.utils import sanitize
+
+        payload = {
+            "url": "https://host/x?token=TOPS3CRET",
+            "items": [{"error": "Invalid credential TOPS3CRET; try again"}],
+        }
+        out = sanitize(payload, secrets=("TOPS3CRET",))
+        text = json.dumps(out)
+        self.assertNotIn("TOPS3CRET", text)
+        self.assertIn("[REDACTED]", text)
+
+    def test_sensitive_keys_always_redacted_without_secrets(self):
+        from server.utils import sanitize
+
+        out = sanitize({"token": "abc", "description": "safe"})
+        self.assertEqual(out["token"], "[REDACTED]")
+        self.assertEqual(out["description"], "safe")
+
+
+class _FakeFileResponse:
+    def __init__(self, status: int, data: bytes = b""):
+        self.status = status
+        self._data = data
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    async def read(self):
+        return self._data
+
+
+class _FakeFileSession:
+    """Stand-in for aiohttp.ClientSession used by download_file."""
+
+    def __init__(self, status: int = 200, data: bytes = b"filebytes"):
+        self.status = status
+        self.data = data
+        self.requests: list[tuple] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return False
+
+    async def request(self, method, url, **kwargs):
+        self.requests.append((method, url, kwargs))
+        return _FakeFileResponse(self.status, self.data)
+
+
+class DownloadTests(unittest.IsolatedAsyncioTestCase):
+    """file route is downloaded through the authenticated session (no admin API)."""
+
+    def _read_bytes(self, path):
+        with open(path, "rb") as fh:
+            return fh.read()
+
+    async def test_downloads_absolute_url_to_dest_dir(self):
+        from unittest.mock import AsyncMock, patch
+
+        from server.session_manager import session_manager
+
+        blob = b"hello-ctf"
+        fake = _FakeFileSession(data=blob)
+        c = CTFdClient(gateway=FakeGateway())
+        with patch.object(
+            session_manager, "get_session", new=AsyncMock(return_value=fake)
+        ), tempfile.TemporaryDirectory() as tmp:
+            result = await c.download_file(
+                "https://ctf.example.com/files/abc/blob.bin", dest_dir=tmp
+            )
+            self.assertTrue(result["success"])
+            self.assertEqual(result["bytes"], len(blob))
+            self.assertEqual(result["sha256"], hashlib.sha256(blob).hexdigest())
+            self.assertEqual(fake.requests[0][0], "GET")
+            self.assertEqual(self._read_bytes(result["path"]), blob)
+
+    async def test_download_resolves_site_relative_path(self):
+        from unittest.mock import AsyncMock, patch
+
+        from server.session_manager import session_manager
+
+        fake = _FakeFileSession(data=b"x")
+        c = CTFdClient(gateway=FakeGateway(base="https://ctf.example.com"))
+        with patch.object(
+            session_manager, "get_session", new=AsyncMock(return_value=fake)
+        ), tempfile.TemporaryDirectory() as tmp:
+            await c.download_file("/files/abc/blob.bin", dest_dir=tmp)
+        self.assertEqual(
+            fake.requests[0][1], "https://ctf.example.com/files/abc/blob.bin"
+        )
+
+    async def test_download_blocks_private_host_by_default(self):
+        from unittest.mock import AsyncMock, patch
+
+        from server.session_manager import session_manager
+
+        c = CTFdClient(gateway=FakeGateway(base="http://127.0.0.1:8000"))
+        with patch.object(
+            session_manager, "get_session", new=AsyncMock(return_value=_FakeFileSession())
+        ), self.assertRaises(ConfigurationError):
+            await c.download_file("http://127.0.0.1:8000/x/y.bin")
+
+    async def test_download_non_200_raises_api_error(self):
+        from unittest.mock import AsyncMock, patch
+
+        from server.session_manager import session_manager
+
+        c = CTFdClient(gateway=FakeGateway())
+        with patch.object(
+            session_manager,
+            "get_session",
+            new=AsyncMock(return_value=_FakeFileSession(status=403)),
+        ), self.assertRaises(CTFdAPIError):
+            await c.download_file("https://ctf.example.com/files/x.bin")
+
+    async def test_download_rejects_garbage_url(self):
+        c = CTFdClient(gateway=FakeGateway())
+        with self.assertRaises(ValidationError):
+            await c.download_file("ftp://nope/x.bin")
+
+
+class UnlockHintTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unlock_hint_success(self):
+        gw = FakeGateway()
+        gw.responses[("POST", "/unlocks")] = {
+            "success": True,
+            "data": {"id": 55, "date": "2026-01-01T00:00:00Z"},
+        }
+        gw.responses[("GET", "/hints/1")] = {
+            "success": True,
+            "data": {"id": 1, "content": "try harder"},
+        }
+        c = CTFdClient(gateway=gw)
+        result = await c.unlock_hint(1)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["hint_id"], 1)
+        self.assertEqual(result["content"], "try harder")
+        self.assertEqual(result["unlock_id"], 55)
+
+    async def test_unlock_hint_rejected_reports_error(self):
+        call_log = []
+
+        class RecordingGateway(FakeGateway):
+            async def request(self, method, path, **kwargs):
+                call_log.append((method, path, kwargs.get("allow_failure")))
+                return await super().request(method, path, **kwargs)
+
+        gw = RecordingGateway()
+        gw.responses[("POST", "/unlocks")] = {
+            "success": False,
+            "errors": {"target": ["insufficient score"]},
+        }
+        gw.responses[("GET", "/hints/1")] = {"success": True, "data": {"id": 1}}
+        c = CTFdClient(gateway=gw)
+        result = await c.unlock_hint(1)
+        self.assertFalse(result["success"])
+        self.assertIn("insufficient score", result["error"])
+        # allow_failure must be True so "already unlocked" (HTTP 400) is not raised
+        self.assertEqual(call_log[0][2], True)
+
+    async def test_unlock_hint_invalid_id(self):
+        c = CTFdClient(gateway=FakeGateway())
+        with self.assertRaises(ValidationError):
+            await c.unlock_hint(0)
+        with self.assertRaises(ValidationError):
+            await c.unlock_hint("abc")
 
 
 if __name__ == "__main__":

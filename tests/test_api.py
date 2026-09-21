@@ -133,28 +133,5 @@ class RestTests(unittest.TestCase):
         return main_module
 
 
-class FileCacheTests(unittest.TestCase):
-    def test_safe_filename_blocks_traversal(self):
-        from server.file_cache import safe_filename, save_file
-
-        name = safe_filename("../../etc/passwd")
-        self.assertNotIn("..", name)
-        self.assertNotIn("/", name)
-
-        import tempfile
-
-        from server.config import settings
-
-        with tempfile.TemporaryDirectory() as tmp:
-            previous = settings.file_cache_dir
-            settings.file_cache_dir = tmp
-            try:
-                path = save_file("../../etc/passwd", b"not-a-password-file")
-                self.assertTrue(path.startswith(tmp))
-                self.assertNotIn("..", path)
-            finally:
-                settings.file_cache_dir = previous
-
-
 if __name__ == "__main__":
     unittest.main()

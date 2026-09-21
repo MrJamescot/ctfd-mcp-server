@@ -27,7 +27,7 @@ from .errors import (
 )
 from .session_manager import session_manager
 from .state_manager import state
-from .utils import api_base, is_valid_http_url, safe_host
+from .utils import api_base, is_private_or_metadata_url, is_valid_http_url, safe_host
 
 logger = logging.getLogger("ctfd.gateway")
 
@@ -51,6 +51,12 @@ class Gateway:
         """Validate and set the CTFd base URL (runtime override)."""
         if not is_valid_http_url(url):
             raise ConfigurationError(f"Invalid CTFd URL: {url!r}")
+        if not settings.ctfd_allow_private_ips and is_private_or_metadata_url(url):
+            raise ConfigurationError(
+                "CTFd URL targets a private/loopback/link-local address or a "
+                "metadata endpoint, which is blocked by default. Set "
+                "CTFD_ALLOW_PRIVATE_IPS=1 to permit a local CTFd instance.",
+            )
         self._base = url.rstrip("/")
         state.set_base_url(self._base)
         return self._base
@@ -92,6 +98,12 @@ class Gateway:
             raise ConfigurationError(
                 "CTFd base URL is not configured. Set CTFD_BASE_URL or call set_base_url."
             )
+        if not settings.ctfd_allow_private_ips and is_private_or_metadata_url(base):
+            raise ConfigurationError(
+                "CTFd base URL targets a private/loopback/link-local address or a "
+                "metadata endpoint, which is blocked by default. Set "
+                "CTFD_ALLOW_PRIVATE_IPS=1 to permit a local CTFd instance.",
+            )
 
         if use_api:
             url = f"{api_base(base)}{path}"
@@ -103,6 +115,19 @@ class Gateway:
             **session_manager.auth_headers(),
             **(headers or {}),
         }
+        if use_api and state.get_token() and "Content-Type" not in request_headers:
+            # CTFd only honours "Authorization: Token ..." when the request
+            # body is JSON (request.is_json); without this header token auth is
+            # silently ignored and the request is treated as anonymous.
+            request_headers["Content-Type"] = "application/json"
+        if (
+            use_api
+            and method.upper() not in ("GET", "HEAD", "OPTIONS", "TRACE")
+            and state.auth_mode() in ("cookie", "credentials")
+        ):
+            # CTFd v3 CSRF: JSON state-changing requests over a web session
+            # must echo the session nonce as the CSRF-Token header.
+            request_headers.update(session_manager.csrf_headers())
 
         error: Exception | None = None
         attempts = 2 if (retry and method.upper() == "GET") else 1
@@ -116,6 +141,7 @@ class Gateway:
                     json=json,
                     data=data,
                     allow_redirects=allow_redirects,
+                    max_redirects=settings.http_max_redirects,
                 ) as response:
                     if raw:
                         return {
@@ -126,7 +152,7 @@ class Gateway:
                                 response.headers.getall("Set-Cookie", [])
                             ),
                         }
-                    return await self._decode(method, path, response, allow_failure)
+                    return await self._decode(method, path, response, allow_failure, use_api=use_api)
             except aiohttp.ClientConnectionError as exc:
                 error = exc
             except asyncio.TimeoutError as exc:
@@ -142,7 +168,7 @@ class Gateway:
         )
 
     async def _decode(self, method: str, path: str, response: aiohttp.ClientResponse,
-                      allow_failure: bool) -> Any:
+                      allow_failure: bool, use_api: bool = True) -> Any:
         body_text = await response.text()
         content_type = response.headers.get("Content-Type", "")
 
@@ -157,18 +183,22 @@ class Gateway:
 
         if (
             payload is None
-            and "html" in content_type.lower()
-            and self._looks_like_login_page(body_text)
+            and use_api
+            and ("html" in content_type.lower() or "<html" in body_text[:200].lower())
         ):
+            # CTFd's /api/v1* routes return JSON.  An HTML body here means the
+            # request was bounced to a login/landing page (some deployments,
+            # e.g. behind a reverse proxy, respond 200 instead of 302).
             raise AuthenticationError(
-                    "CTFd redirected to its login page instead of returning JSON "
-                    f"({method} {path}). The credential is not valid for THIS "
-                    "instance (or the account has no access).",
-                    detail=(
-                        "Provide a valid API token/cookie for this CTFd instance, "
-                        "or call set_cookie/login with the account of this instance."
-                    ),
-                )
+                f"CTFd returned an HTML page instead of JSON for the API "
+                f"({method} {path}). This usually means the request was "
+                "unauthenticated and bounced to a login page, or the base URL "
+                "does not point at a CTFd instance.",
+                detail=(
+                    "Provide a valid credential for this CTFd instance, check "
+                    "CTFD_BASE_URL, or log in first in credentials mode."
+                ),
+            )
 
         if response.status == 401:
             raise AuthenticationError(
@@ -180,10 +210,10 @@ class Gateway:
             raise AuthenticationError(
                 "CTFd rejected the request (403 FORBIDDEN).",
                 detail=(
-                    "The credential may be invalid, OR the account is authenticated "
-                    "but lacks permission (e.g. not in a team, or the endpoint "
-                    "requires admin). Try joining/creating a team or using an admin "
-                    "account/token."
+                    "The credential may be invalid, the account lacks permission "
+                    "(e.g. not in a team, or the endpoint requires admin), or a "
+                    "state-changing request with a session cookie was missing its "
+                    "CSRF-Token. Re-login or join/create a team, then retry."
                 ),
             )
 

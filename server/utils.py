@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import os
+import ipaddress
 import re
 from typing import Any
 from urllib.parse import urlsplit
-
-from .config import settings
 
 REDACTED = "[REDACTED]"
 
@@ -28,10 +26,15 @@ SENSITIVE_KEYS = {
     "answer",
 }
 
-
-def ensure_cache_dir() -> None:
-    """Create the challenge-file cache directory if it does not exist yet."""
-    os.makedirs(settings.file_cache_dir, exist_ok=True)
+# Well-known cloud metadata / link-local endpoints used for SSRF.
+METADATA_HOSTS = {
+    "169.254.169.254",
+    "metadata",
+    "metadata.google.internal",
+    "metadata.google.internal.",
+    "instance-data",
+    "instance-data.ec2.internal",
+}
 
 
 def mask(value: Any) -> str:
@@ -43,16 +46,38 @@ def mask(value: Any) -> str:
     return "" if value in (None, "") else REDACTED
 
 
-def sanitize(obj: Any) -> Any:
-    """Deep-copy ``obj`` with every sensitive value replaced by REDACTED."""
+def sanitize(obj: Any, secrets: tuple[str, ...] = ()) -> Any:
+    """Deep-copy ``obj`` redacting sensitive values.
+
+    Values whose key is in ``SENSITIVE_KEYS`` are replaced by REDACTED, and any
+    occurrence of a *known secret value* (from ``secrets``) inside string fields
+    is also scrubbed so tokens embedded in URLs or error text never leak.
+    """
+    secrets = tuple(s for s in secrets if s)
     if isinstance(obj, dict):
-        return {
-            key: REDACTED if key.lower() in SENSITIVE_KEYS else sanitize(val)
-            for key, val in obj.items()
-        }
+        result: dict[str, Any] = {}
+        for key, val in obj.items():
+            lowered = key.lower()
+            if lowered in SENSITIVE_KEYS:
+                result[key] = REDACTED
+            elif isinstance(val, str):
+                result[key] = scrub(val, secrets)
+            else:
+                result[key] = sanitize(val, secrets)
+        return result
     if isinstance(obj, (list, tuple)):
-        return [sanitize(item) for item in obj]
+        return [sanitize(item, secrets) for item in obj]
+    if isinstance(obj, str) and secrets:
+        return scrub(obj, secrets)
     return obj
+
+
+def scrub(value: str, secrets: tuple[str, ...]) -> str:
+    """Replace every occurrence of each known secret with REDACTED."""
+    for secret in secrets:
+        if secret and secret in value:
+            value = value.replace(secret, REDACTED)
+    return value
 
 
 def safe_host(base_url: str) -> str:
@@ -79,6 +104,34 @@ def is_valid_http_url(value: str) -> bool:
     if parts.scheme not in ("http", "https") or not parts.netloc:
         return False
     return not (parts.query or parts.fragment or "@" in parts.netloc)
+
+
+def is_private_or_metadata_url(value: str) -> bool:
+    """True when ``value`` targets a private/loopback/link-local address,
+    a cloud metadata endpoint, or a bare localhost hostname.
+
+    Used to block SSRF: a public MCP/REST server must not let callers point it
+    at internal hosts (127.0.0.1, 10.x/172.16-31.x/192.168.x, 169.254.169.254,
+    *.localhost, ...) unless ``CTFD_ALLOW_PRIVATE_IPS=1`` is set.
+    """
+    host = (urlsplit(value.strip().rstrip("/")).hostname or "").lower().rstrip(".")
+    if not host:
+        return False
+    if host in METADATA_HOSTS or host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # A DNS name: nothing to resolve here; it is allowed.
+        return False
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
 
 
 def extract_csrf_nonce(html: str) -> str | None:

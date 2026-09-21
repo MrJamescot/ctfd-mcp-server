@@ -64,10 +64,10 @@ def test_env_var_mapping(monkeypatch):
         "CTFD_ADMIN_TOKEN": "ctfd_abc",
         "CTFD_SESSION_COOKIE": "session=xyz",
         "CTFD_HTTP_TIMEOUT": "30",
-        "FILE_CACHE_DIR": "/tmp/cache",
         "CTFD_MCP_TRANSPORT": "sse",
         "MCP_PORT": "9001",
         "CTFD_PERSIST_SECRETS": "true",
+        "CTFD_DOWNLOAD_DIR": "/tmp/dl",
     }
     monkeypatch.setenv("_PYTEST_DISABLE_DOTENV", "1")
     for k, v in env.items():
@@ -77,10 +77,10 @@ def test_env_var_mapping(monkeypatch):
     assert settings.ctfd_admin_token == "ctfd_abc"
     assert settings.ctfd_session_cookie == "session=xyz"
     assert settings.http_timeout == 30.0
-    assert settings.file_cache_dir == "/tmp/cache"
     assert settings.mcp_transport == "sse"
     assert settings.mcp_port == 9001
     assert settings.persist_secrets is True
+    assert settings.downloads_dir == "/tmp/dl"
 
 
 def test_is_valid_http_url():

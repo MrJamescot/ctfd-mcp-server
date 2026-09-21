@@ -14,27 +14,50 @@ Security notes:
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
+import os
 from typing import Any
+from urllib.parse import urlsplit
 
+from .config import settings
 from .errors import (
     AuthenticationError,
     ChallengeNotFoundError,
     ConfigurationError,
     CTFdAPIError,
+    CTFdError,
     SubmissionError,
     ValidationError,
 )
-from .file_cache import save_file
 from .gateway import gateway as default_gateway
 from .session_manager import session_manager
 from .state_manager import state
-from .utils import extract_csrf_nonce, extract_version, safe_host, sanitize
+from .utils import (
+    extract_csrf_nonce,
+    extract_version,
+    is_private_or_metadata_url,
+    safe_host,
+    sanitize,
+)
 
 logger = logging.getLogger("ctfd.client")
 
 DEFAULT_PER_PAGE = 25
 MAX_PER_PAGE = 100
+
+
+def _safe_filename(name: str) -> str:
+    """Return a filesystem-safe leaf name (no path separators, no '..')."""
+    name = os.path.basename(name.replace("\\", "/")).strip()
+    name = name.replace("/", "_").replace("..", "_").strip() or "download.bin"
+    return name
+
+
+def _write_bytes(path: str, data: bytes) -> None:
+    with open(path, "wb") as fh:
+        fh.write(data)
 
 
 class CTFdClient:
@@ -106,14 +129,9 @@ class CTFdClient:
             )
 
         set_cookies = res.get("set_cookie") or ""
-        if not set_cookies and res.get("text"):
-            # Some instances do not send Set-Cookie on the redirect; fall back
-            # to collecting them from the response headers is handled above.
-            pass
-
         if not set_cookies:
-            # Instances that never set a cookie on the redirect response: probe
-            # /users/me to confirm the credentials actually authenticated us.
+            # Instances that never send Set-Cookie on the redirect response:
+            # probe /users/me to confirm the credentials actually authenticated.
             try:
                 me = await self._get("/users/me")
                 authed = bool((me or {}).get("data", {}).get("id"))
@@ -128,6 +146,11 @@ class CTFdClient:
             state.set_cookie(set_cookies)
         state.set_creds(username, password)
         state.set_token("")  # wipe any stale token; use the fresh cookie
+
+        # CTFd regenerates session["nonce"] inside login_user(), so the nonce
+        # taken from the anonymous /login page is invalid for submissions.
+        # Re-fetch it from an authenticated page after login (best-effort).
+        await self._fetch_authenticated_nonce()
 
         return {
             "success": True,
@@ -253,7 +276,7 @@ class CTFdClient:
             raise ChallengeNotFoundError(
                 f"Challenge {identifier!r} returned no detail."
             )
-        return sanitize(data)
+        return sanitize(data, self._active_secrets())
 
     # ------------------------------------------------------------- flags
 
@@ -283,8 +306,13 @@ class CTFdClient:
         cid: int | None
         if challenge_name:
             cid = await self._resolve_by_name(challenge_name)
+        elif challenge_id is not None:
+            try:
+                cid = int(challenge_id)
+            except (TypeError, ValueError):
+                raise ValidationError("challenge_id must be a positive integer.") from None
         else:
-            cid = int(challenge_id) if challenge_id is not None else None
+            cid = None
 
         if cid is None:
             raise ChallengeNotFoundError(
@@ -312,12 +340,123 @@ class CTFdClient:
 
         return self._parse_attempt(cid, res)
 
+    # ------------------------------------------------------------- files
+
+    async def download_file(
+        self, file_url: str, dest_dir: str | None = None
+    ) -> dict[str, Any]:
+        """Download a challenge attachment.
+
+        CTFd serves attachments over the public static route
+        ``{base}/files/...`` (some deployments append a per-user signed
+        ``token`` query parameter).  This downloads the bytes through the
+        authenticated session and stores them under ``dest_dir`` (default:
+        ``CTFD_DOWNLOAD_DIR`` / ``./downloads``).
+
+        Returns ``{success, url, path, bytes, sha256}``.  The admin-only
+        ``/api/v1/files/{id}/download`` route is never used.
+        """
+        raw = (file_url or "").strip()
+        if not raw:
+            raise ValidationError("file_url must not be empty.")
+
+        base = (self.gateway.base or "").rstrip("/")
+        parsed = urlsplit(raw)
+        if parsed.scheme:
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValidationError(
+                    "file_url must be an absolute http(s) URL or a site-relative "
+                    "path (e.g. /files/<hash>/file.bin)."
+                )
+            url = raw
+        else:
+            url = f"{base}{raw}"
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise ValidationError(
+                "file_url must be an absolute http(s) URL or a site-relative path "
+                "(e.g. /files/abcdef/file.bin)."
+            )
+        if not settings.ctfd_allow_private_ips and is_private_or_metadata_url(url):
+            raise ConfigurationError(
+                "Refusing to download from a private/loopback/metadata address. "
+                "Set CTFD_ALLOW_PRIVATE_IPS=1 to allow local CTFd instances."
+            )
+
+        session = await session_manager.get_session()
+        req = await session.request(
+            "GET", url, headers=dict(session_manager.auth_headers())
+        )
+        async with req as resp:
+            if resp.status != 200:
+                raise CTFdAPIError(
+                    f"File download failed (HTTP {resp.status}).",
+                    resp.status,
+                    detail=(
+                        "The signed file URL may have expired; re-read the "
+                        "challenge detail to get a fresh one."
+                    ),
+                )
+            data = await resp.read()
+
+        ddir = (dest_dir or "").strip() or (settings.downloads_dir or "downloads")
+        os.makedirs(ddir, exist_ok=True)
+        fname = _safe_filename(os.path.basename(parts.path))
+        path = os.path.join(ddir, fname)
+        await asyncio.to_thread(_write_bytes, path, data)
+        return {
+            "success": True,
+            "url": url,
+            "path": path,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+
+    # ------------------------------------------------------------- hints
+
+    async def unlock_hint(self, hint_id: int) -> dict[str, Any]:
+        """Unlock (and read) a challenge hint.
+
+        CTFd records hint unlocks at ``POST /api/v1/unlocks`` with body
+        ``{"type": "hints", "target": <hint_id>}``; a hint with a ``cost``
+        deducts that many points from the account.  Returns ``{success,
+        hint_id, content, ...}``; the content is read back after unlocking.
+        """
+        try:
+            hid = int(hint_id)
+        except (TypeError, ValueError):
+            raise ValidationError("hint_id must be a positive integer.") from None
+        if hid <= 0:
+            raise ValidationError("hint_id must be a positive integer.")
+
+        result = await self.gateway.request(
+            "POST", "/unlocks", json={"type": "hints", "target": hid}, allow_failure=True
+        )
+        data = result.get("data") or {}
+        payload: dict[str, Any] = {
+            "success": bool(result.get("success")),
+            "hint_id": hid,
+            "unlock_id": data.get("id"),
+            "date": data.get("date"),
+        }
+        if result.get("success") is False:
+            payload["error"] = str(result.get("errors") or {})[:400]
+        try:
+            hint = await self.gateway.request("GET", f"/hints/{hid}")
+            payload["content"] = ((hint.get("data") or {}).get("content")) or None
+        except CTFdError:
+            pass
+        return sanitize(payload, self._active_secrets())
+
     # ------------------------------------------------------- instance info
 
     async def scoreboard(self) -> dict[str, Any]:
         """Return the public scoreboard (top standings)."""
         payload = await self._get("/scoreboard")
-        return {"success": True, "data": sanitize(payload.get("data") or payload)}
+        return {
+            "success": True,
+            "data": sanitize(payload.get("data") or payload, self._active_secrets()),
+        }
 
     async def progress(self) -> dict[str, Any]:
         """Return the authenticated user's progress (score + solves)."""
@@ -384,29 +523,6 @@ class CTFdClient:
 
     # ------------------------------------------------------------ health
 
-    async def download_challenge_file(self, file_id: int, filename: str) -> dict[str, Any]:
-        """Download a challenge file into the local cache directory.
-
-        Returns the saved path.  Raises ``CTFdAPIError`` on failure.
-        """
-        base = self.gateway.base
-        if not base:
-            raise ConfigurationError(
-                "CTFd base URL is not configured. Set CTFD_BASE_URL or call set_base_url."
-            )
-        url = f"{base.rstrip('/')}/api/v1/files/{file_id}/download"
-        session = await session_manager.get_session()
-        headers = dict(session_manager.auth_headers())
-        async with session.get(url, headers=headers) as response:
-            if response.status != 200:
-                raise CTFdAPIError(
-                    f"CTFd returned HTTP {response.status} for file {file_id}.",
-                    response.status,
-                )
-            content = await response.read()
-        path = save_file(filename or f"file_{file_id}", content)
-        return {"success": True, "path": path, "file_id": file_id}
-
     async def health(self) -> dict[str, Any]:
         """Combine reachability, API and authentication checks."""
         base = self.gateway.base
@@ -463,7 +579,10 @@ class CTFdClient:
 
         if state.is_configured():
             try:
-                me = await self.gateway.request("GET", "/users/me", allow_failure=True)
+                # _get auto-refreshes login in credentials mode, so an
+                # anonymous /users/me (HTML/401) also triggers a self-healing
+                # login and this probe reflects the real auth state.
+                me = await self._get("/users/me")
                 result["authenticated"] = bool((me or {}).get("data", {}).get("id"))
             except (AuthenticationError, CTFdAPIError):
                 result["authenticated"] = False
@@ -487,6 +606,7 @@ class CTFdClient:
             raise
 
     async def _fetch_login_nonce(self) -> str | None:
+        """CSRF nonce from the anonymous /login page (used for form logins)."""
         try:
             raw = await self.gateway.request(
                 "GET", "/login", use_api=False, raw=True, retry=True
@@ -496,6 +616,37 @@ class CTFdClient:
         nonce = extract_csrf_nonce(raw.get("text") or "")
         session_manager.set_csrf_nonce(nonce)
         return nonce
+
+    async def _fetch_authenticated_nonce(self) -> str | None:
+        """Re-fetch the CSRF nonce from an authenticated page after login.
+
+        ``login_user()`` regenerates ``session["nonce"]``, so pre-login nonces
+        are rejected by the CSRF check on state-changing requests.  Best-effort:
+        a failure simply leaves the previous nonce cleared.
+        """
+        try:
+            raw = await self.gateway.request(
+                "GET", "/challenges", use_api=False, raw=True, retry=False
+            )
+        except CTFdError:
+            session_manager.set_csrf_nonce(None)
+            return None
+        nonce = extract_csrf_nonce(raw.get("text") or "")
+        session_manager.set_csrf_nonce(nonce)
+        return nonce
+
+    def _active_secrets(self) -> tuple[str, ...]:
+        """Known secret values that must never leak into sanitized output."""
+        secrets: list[str] = []
+        for value in (
+            state.get_token(),
+            state.get_cookie(),
+            state.get_password(),
+            session_manager.csrf_nonce,
+        ):
+            if value:
+                secrets.append(value)
+        return tuple(secrets)
 
     async def _resolve_by_name(self, name: str) -> int | None:
         cid = state.name_to_id(name)

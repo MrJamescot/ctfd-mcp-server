@@ -27,3 +27,12 @@ class SubmitModel(BaseModel):
     challenge_name: str | None = None
     flag: str
     confirm: bool = False
+
+
+class DownloadModel(BaseModel):
+    file_url: str = Field(min_length=1)
+    dest_dir: str | None = None
+
+
+class HintModel(BaseModel):
+    hint_id: int = Field(gt=0)

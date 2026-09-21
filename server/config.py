@@ -32,16 +32,32 @@ class Settings(BaseSettings):
     ctfd_username: str = ""
     ctfd_password: str = ""
 
+    # Optional bearer token protecting the REST interface
+    # (/api/v1/*).  When set, every REST call must include
+    # ``Authorization: Bearer <token>``; the SSE transport is unaffected.
+    ctfd_api_token: str = ""
+
+    # SSRF guard.  Private/loopback/link-local/metadata hosts are blocked by
+    # default; enable this to point the server at a local CTFd instance
+    # (e.g. http://127.0.0.1:8000).
+    ctfd_allow_private_ips: bool = Field(default=False, validation_alias=AliasChoices("CTFD_ALLOW_PRIVATE_IPS", "ctfd_allow_private_ips"))
+
+    # Where non-secret runtime state is persisted.  Relative paths resolve
+    # against the CWD unless overridden (recommended for containers).
+    ctfd_state_file: str = Field(default="", validation_alias=AliasChoices("CTFD_STATE_FILE", "ctfd_state_file"))
+
     # HTTP / transport settings.
     http_timeout: float = Field(default=15.0, validation_alias=AliasChoices("CTFD_HTTP_TIMEOUT", "http_timeout"))
-    http_max_redirects: int = 5
+    http_max_redirects: int = Field(default=5, validation_alias=AliasChoices("CTFD_HTTP_MAX_REDIRECTS", "http_max_redirects"))
 
-    # MCP server settings (used when running on the "sse"/"http" transport).
-    mcp_host: str = "0.0.0.0"
+    # REST server bind address/port.  Defaults to loopback so the API is
+    # not exposed to the network; open it up explicitly (host 0.0.0.0) and
+    # protect it with CTFD_API_TOKEN when you need remote access.
+    mcp_host: str = "127.0.0.1"
     mcp_port: int = 8000
 
-    # Where downloaded challenge files are saved.
-    file_cache_dir: str = "./file_cache"
+    # Where challenge attachments are saved by the download_file tool.
+    downloads_dir: str = Field(default="./downloads", validation_alias=AliasChoices("CTFD_DOWNLOAD_DIR", "downloads_dir"))
 
     # Persist credentials to server_state.json.  Keep disabled (default) so
     # secrets are never written to disk.  Enabling this is discouraged.

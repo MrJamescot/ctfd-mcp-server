@@ -29,7 +29,15 @@ from .errors import (
     ValidationError,
 )
 from .gateway import gateway
-from .models import BaseUrlModel, CookieModel, CredsModel, SubmitModel, TokenModel
+from .models import (
+    BaseUrlModel,
+    CookieModel,
+    CredsModel,
+    DownloadModel,
+    HintModel,
+    SubmitModel,
+    TokenModel,
+)
 from .session_manager import session_manager
 from .setup import configure_from_env
 from .state_manager import state
@@ -46,6 +54,27 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="CTFd MCP Server", version="1.0.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def api_token_middleware(request: Request, call_next):
+    """Optional bearer-token gate for the REST interface.
+
+    When ``CTFD_API_TOKEN`` is set, every ``/api/v1/*`` call must carry
+    ``Authorization: Bearer <token>``.  This protects deployments that expose
+    the REST layer beyond the loopback interface.
+    """
+    if settings.ctfd_api_token and request.url.path.startswith("/api/v1") and (
+        request.headers.get("Authorization") != f"Bearer {settings.ctfd_api_token}"
+    ):
+        return JSONResponse(
+                status_code=401,
+                content={"error": {
+                    "type": "Unauthorized",
+                    "message": "Missing or invalid API token for this REST interface.",
+                }},
+            )
+    return await call_next(request)
 
 
 def _http_status_for(exc: CTFdError) -> int:
@@ -159,6 +188,20 @@ async def scoreboard():
     return await ctfd_client.scoreboard()
 
 
+@app.post("/api/v1/download")
+async def download_file(payload: DownloadModel):
+    """Download a challenge attachment over the CTFd static /files route."""
+    return await ctfd_client.download_file(
+        payload.file_url, dest_dir=payload.dest_dir
+    )
+
+
+@app.post("/api/v1/unlock_hint")
+async def unlock_hint(payload: HintModel):
+    """Unlock (and read) a challenge hint."""
+    return await ctfd_client.unlock_hint(payload.hint_id)
+
+
 @app.get("/api/v1/progress")
 async def progress():
     return await ctfd_client.progress()
@@ -177,11 +220,6 @@ async def auth_status():
 @app.get("/api/v1/health")
 async def health():
     return await ctfd_client.health()
-
-
-@app.get("/api/v1/files/{fid}/download")
-async def download_file(fid: int):
-    return await ctfd_client.download_challenge_file(fid, f"file_{fid}")
 
 
 def run() -> None:

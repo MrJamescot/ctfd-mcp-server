@@ -26,8 +26,9 @@ class McpToolTests(unittest.TestCase):
         names = asyncio.run(run())
         expected = {
             "set_base_url", "set_token", "set_cookie", "login",
-            "challenges", "challenge", "submit_flag", "scoreboard",
-            "progress", "instance_info", "auth_status", "health", "download_file",
+            "challenges", "challenge", "submit_flag", "download_file",
+            "unlock_hint", "scoreboard",
+            "progress", "instance_info", "auth_status", "health",
         }
         self.assertEqual(expected, set(names) & expected)
         self.assertGreaterEqual(len(names), len(expected))
@@ -118,6 +119,10 @@ class McpToolTests(unittest.TestCase):
                 "status": 302, "text": "", "content_type": "text/html",
                 "set_cookie": "session=maskedcookie",
             }
+            # post-login nonce re-fetch (authenticated page)
+            gw.responses[("GET", "/challenges")] = {
+                "status": 200, "text": "", "content_type": "text/html", "set_cookie": "",
+            }
             install, _repl = self._patch_client(gw)
             prev = install(mcp_module)
             try:
@@ -125,6 +130,34 @@ class McpToolTests(unittest.TestCase):
                 self.assertNotIn("hunter2", out)
                 self.assertNotIn("maskedcookie", out)
                 self.assertIn("success", out)
+            finally:
+                mcp_module.ctfd_client = prev
+
+        asyncio.run(run())
+
+    def test_unlock_hint_tool_missing_id_is_structured_error(self):
+        async def run():
+            mcp_module = await self._get_server()
+            install, _repl = self._patch_client(FakeGateway())
+            prev = install(mcp_module)
+            try:
+                out = await mcp_module.unlock_hint(0)
+                payload = json.loads(out)
+                self.assertEqual(payload["error"]["type"], "ValidationError")
+            finally:
+                mcp_module.ctfd_client = prev
+
+        asyncio.run(run())
+
+    def test_download_file_tool_missing_url_is_structured_error(self):
+        async def run():
+            mcp_module = await self._get_server()
+            install, _repl = self._patch_client(FakeGateway())
+            prev = install(mcp_module)
+            try:
+                out = await mcp_module.download_file("")
+                payload = json.loads(out)
+                self.assertEqual(payload["error"]["type"], "ValidationError")
             finally:
                 mcp_module.ctfd_client = prev
 

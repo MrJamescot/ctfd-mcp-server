@@ -37,6 +37,19 @@ class SessionManager:
             headers["Cookie"] = state.get_cookie()
         return headers
 
+    def csrf_headers(self) -> dict[str, str]:
+        """Return a ``CSRF-Token`` header when a nonce is known.
+
+        CTFd v3 enforces the header on JSON state-changing requests when a
+        session (web cookie) is present: ``session["nonce"]`` must equal the
+        ``CSRF-Token`` header.  Token-authenticated requests have no session
+        nonce and must NOT send the header, so callers only attach this for
+        cookie/credentials auth modes.
+        """
+        if self.csrf_nonce:
+            return {"CSRF-Token": self.csrf_nonce}
+        return {}
+
     def cookie_jar(self) -> aiohttp.CookieJar:
         # ``unsafe=True`` is required so HTTP (non-TLS) CTFd instances used in
         # local development can still store session cookies.

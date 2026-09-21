@@ -27,12 +27,6 @@ def get_challenge(identifier):
     return r.json()
 
 
-def download_file(fid):
-    r = requests.get(f"{REST_BASE}/files/{fid}/download")
-    r.raise_for_status()
-    return r.json()
-
-
 def submit_flag(identifier, flag):
     r = requests.post(
         f"{REST_BASE}/submit",
@@ -42,9 +36,24 @@ def submit_flag(identifier, flag):
     return r.json()
 
 
+def download_file(file_url, dest_dir=None):
+    """Download a challenge attachment via the static /files route."""
+    r = requests.post(f"{REST_BASE}/download", json={"file_url": file_url, "dest_dir": dest_dir})
+    r.raise_for_status()
+    return r.json()
+
+
+def unlock_hint(hint_id):
+    """Unlock a challenge hint (may cost points on paid hints)."""
+    r = requests.post(f"{REST_BASE}/unlock_hint", json={"hint_id": hint_id})
+    r.raise_for_status()
+    return r.json()
+
+
 def solve_challenge_logic(challenge):
     # PLACEHOLDER: implement your solver, e.g.:
-    # - if the challenge lists files, download and analyze them
+    # - if the challenge lists files, download_file() and analyze them
+    # - unlock_hint() on the hint ids returned by get_challenge()
     # - parse the description / hints for patterns
     # Return the flag text, or None if you cannot solve it.
     return "flag{example_flag_from_logic}"
